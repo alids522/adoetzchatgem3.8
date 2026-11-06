@@ -55,7 +55,7 @@ jobs:
       - name: Stage 1A — Secret Leakage Check
         run: |
           echo "Scanning repository for hardcoded private keys or service_role secrets..."
-          if grep -RIn --exclude-dir={.git,.dart_tool,build} "BEGIN RSA PRIVATE KEY\|BEGIN OPENSSH PRIVATE KEY" .; then
+          if grep -RIn --exclude-dir=.git --exclude-dir=.github --exclude-dir=.dart_tool --exclude-dir=build "BEGIN RSA PRIVATE KEY\|BEGIN OPENSSH PRIVATE KEY" .; then
             echo "Private key material detected in repository!"
             exit 1
           fi
@@ -196,3 +196,4 @@ jobs:
             dist/SHA256SUMS.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
