@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="canvas_bg">#F6F7F9</color>
+    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">@color/canvas_bg</item>
+        <item name="android:statusBarColor">@color/canvas_bg</item>
+        <item name="android:navigationBarColor">@color/canvas_bg</item>
+    </style>
+    <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">@color/canvas_bg</item>
+    </style>
+</resources>

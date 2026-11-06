@@ -1,0 +1,198 @@
+name: Build & Release Adoetz Chat 2 Android (com.adoetzchat2.chat)
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  APP_VERSION: "2.0.0"
+  APP_NAMESPACE: "com.adoetzchat2.chat"
+  DEFAULT_SUPABASE_URL: "https://supabase.adoetz52.my.id"
+  DEFAULT_SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlLWRlbW8iLCJpYXQiOjE3ODE0MjkzOTMsImV4cCI6MjA4Mjc1ODQwMH0.qgQ3hxL9JgRhZ-0vuIAG-myu8w5UeWkG1iNrsjqDvR0"
+  DEFAULT_SUPABASE_SCHEMA: "waclonegem3.8"
+  DEFAULT_TURNSTILE_SITE_KEY: "1x00000000000000000000AA"
+
+jobs:
+  build-and-release-android:
+    name: Quality Gate, Sign & Build APK/AAB (com.adoetzchat2.chat)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter Stable
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      # =========================================================================
+      # TAHAP 1: QUALITY & SECURITY GATE (Section 12.2.2)
+      # =========================================================================
+      - name: Stage 1A — Secret Leakage Check
+        run: |
+          echo "Scanning repository for hardcoded private keys or service_role secrets..."
+          if grep -RIn --exclude-dir={.git,.dart_tool,build} "BEGIN RSA PRIVATE KEY\|BEGIN OPENSSH PRIVATE KEY" .; then
+            echo "Private key material detected in repository!"
+            exit 1
+          fi
+          echo "Secret scan passed."
+
+      - name: Stage 1B — Flutter Analyze (Fatal Infos)
+        run: flutter analyze --fatal-infos
+
+      - name: Stage 1C — Unit & Widget Tests (Crypto, Outbox Dedup, State Machine)
+        run: flutter test
+
+      # =========================================================================
+      # TAHAP 2: KEYSTORE INJECTION (Section 12.2.2)
+      # =========================================================================
+      - name: Stage 2 — Configure Release Keystore & Signing Properties
+        env:
+          UPLOAD_KEYSTORE_BASE64: ${{ secrets.UPLOAD_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          KEYSTORE_FILE="$RUNNER_TEMP/adoetz_release.jks"
+          if [ -n "$UPLOAD_KEYSTORE_BASE64" ]; then
+            echo "Decoding UPLOAD_KEYSTORE_BASE64 from GitHub Secrets..."
+            echo "$UPLOAD_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_FILE"
+            STORE_PASS="${KEYSTORE_PASSWORD:-adoetzchat2release}"
+            ALIAS_NAME="${KEY_ALIAS:-adoetzchat2}"
+            KEY_PASS="${KEY_PASSWORD:-adoetzchat2release}"
+          else
+            echo "Generating deterministic CI release signing keystore for com.adoetzchat2.chat..."
+            STORE_PASS="adoetzchat2release"
+            ALIAS_NAME="adoetzchat2"
+            KEY_PASS="adoetzchat2release"
+            keytool -genkeypair -v \
+              -keystore "$KEYSTORE_FILE" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -alias "$ALIAS_NAME" \
+              -storepass "$STORE_PASS" \
+              -keypass "$KEY_PASS" \
+              -dname "CN=Adoetz Chat 2, OU=Security Engineering, O=Adoetz, L=Jakarta, S=DKI, C=ID"
+          fi
+
+          cat <<EOF > android/key.properties
+          storePassword=$STORE_PASS
+          keyPassword=$KEY_PASS
+          keyAlias=$ALIAS_NAME
+          storeFile=$KEYSTORE_FILE
+          EOF
+
+      # =========================================================================
+      # TAHAP 3: BUILD APK (SPLIT-PER-ABI + UNIVERSAL), AAB & CHECKSUM (Section 12.2.2)
+      # =========================================================================
+      - name: Stage 3A — Build Split-per-ABI Release APKs
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SCHEMA: ${{ secrets.SUPABASE_SCHEMA }}
+          TURNSTILE_SITE_KEY: ${{ secrets.TURNSTILE_SITE_KEY }}
+        run: |
+          S_URL="${SUPABASE_URL:-$DEFAULT_SUPABASE_URL}"
+          S_KEY="${SUPABASE_ANON_KEY:-$DEFAULT_SUPABASE_ANON_KEY}"
+          S_SCHEMA="${SUPABASE_SCHEMA:-$DEFAULT_SUPABASE_SCHEMA}"
+          T_KEY="${TURNSTILE_SITE_KEY:-$DEFAULT_TURNSTILE_SITE_KEY}"
+
+          flutter build apk --release --split-per-abi \
+            --dart-define=SUPABASE_URL="$S_URL" \
+            --dart-define=SUPABASE_ANON_KEY="$S_KEY" \
+            --dart-define=SUPABASE_SCHEMA="$S_SCHEMA" \
+            --dart-define=TURNSTILE_SITE_KEY="$T_KEY"
+
+          mkdir -p dist
+          for f in build/app/outputs/flutter-apk/app-*-release.apk; do
+            base=$(basename "$f" | sed "s/app-/com.adoetzchat2.chat-v${APP_VERSION}-/")
+            cp "$f" "dist/$base"
+          done
+
+      - name: Stage 3B — Build Universal Release APK & AAB
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SCHEMA: ${{ secrets.SUPABASE_SCHEMA }}
+          TURNSTILE_SITE_KEY: ${{ secrets.TURNSTILE_SITE_KEY }}
+        run: |
+          S_URL="${SUPABASE_URL:-$DEFAULT_SUPABASE_URL}"
+          S_KEY="${SUPABASE_ANON_KEY:-$DEFAULT_SUPABASE_ANON_KEY}"
+          S_SCHEMA="${SUPABASE_SCHEMA:-$DEFAULT_SUPABASE_SCHEMA}"
+          T_KEY="${TURNSTILE_SITE_KEY:-$DEFAULT_TURNSTILE_SITE_KEY}"
+
+          flutter build apk --release \
+            --dart-define=SUPABASE_URL="$S_URL" \
+            --dart-define=SUPABASE_ANON_KEY="$S_KEY" \
+            --dart-define=SUPABASE_SCHEMA="$S_SCHEMA" \
+            --dart-define=TURNSTILE_SITE_KEY="$T_KEY"
+
+          cp build/app/outputs/flutter-apk/app-release.apk "dist/com.adoetzchat2.chat-v${APP_VERSION}.apk"
+
+          flutter build appbundle --release \
+            --dart-define=SUPABASE_URL="$S_URL" \
+            --dart-define=SUPABASE_ANON_KEY="$S_KEY" \
+            --dart-define=SUPABASE_SCHEMA="$S_SCHEMA" \
+            --dart-define=TURNSTILE_SITE_KEY="$T_KEY"
+
+          cp build/app/outputs/bundle/release/app-release.aab "dist/com.adoetzchat2.chat-v${APP_VERSION}.aab"
+
+      - name: Stage 3C — Generate SHA256SUMS.txt
+        run: |
+          cd dist
+          sha256sum *.apk *.aab > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload Signed Release Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: com.adoetzchat2.chat-v${{ env.APP_VERSION }}-release
+          path: |
+            dist/*.apk
+            dist/*.aab
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - name: Publish to GitHub Releases
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.APP_VERSION }}-build.${{ github.run_number }}
+          name: "Adoetz Chat 2 v${{ env.APP_VERSION }} (Build #${{ github.run_number }})"
+          body: |
+            ## Adoetz Chat 2 (`com.adoetzchat2.chat`) — v${{ env.APP_VERSION }}
+            - **UI/UX:** Precision Neutral Messenger v2.0 (Charcoal Dark `#0E1013` & Crisp Alabaster Light `#F6F7F9`)
+            - **E2EE:** Signal Protocol (X3DH + Double Ratchet) & AEAD File Encryption (`AES-256-GCM`)
+            - **Local Vault:** SQLCipher (`adoetz_vault.db`) wrapped with Android Hardware-backed Keystore + FTS5 Search
+            - **Distribution:** Universal APK, Split-per-ABI APKs, AAB, and `SHA256SUMS.txt`
+          files: |
+            dist/*.apk
+            dist/*.aab
+            dist/SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

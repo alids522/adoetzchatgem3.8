@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "979932495626",
+    "project_id": "waclonegemflash",
+    "storage_bucket": "waclonegemflash.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:979932495626:android:b06a284c3c5482661e84f3",
+        "android_client_info": {
+          "package_name": "com.adoetzchatgem.chat"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBOM6SSvem0svu08tk7hu1qwGVdoA5RQnE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
