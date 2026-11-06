@@ -14,7 +14,7 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "com.adoetzchat2.chat"
-    compileSdk = maxOf(flutter.compileSdkVersion, 35)
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
